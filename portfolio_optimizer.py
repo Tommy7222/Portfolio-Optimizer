@@ -11,20 +11,18 @@ st.set_page_config(page_title="Portfolio Optimizer", layout="wide")
 
 # --- 2. TITLE AND HEADER ---
 st.title("Modern Portfolio Theory Optimizer 📈")
-st.write("This tool helps you optimize a portfolio based on MPT or analyze your own custom portfolio.")
+st.write("This tool helps you optimize a portfolio or analyze your own custom portfolio.")
 
 # --- 3. HELPER FUNCTIONS ---
 
 @st.cache_data
 def get_raw_stock_data(tickers, period):
     """Downloads raw historical stock data, auto-adjusted for splits/dividends."""
-    # auto_adjust=True provides the adjusted close price in the 'Close' column
     return yf.download(tickers, period=period, auto_adjust=True)
 
 @st.cache_data
 def get_market_data(period, market_ticker="SPY"):
     """Downloads market data (e.g., SPY) for beta calculation, auto-adjusted."""
-    # auto_adjust=True provides the adjusted close price in the 'Close' column
     return yf.download(market_ticker, period=period, auto_adjust=True)
 
 @st.cache_data
@@ -76,37 +74,29 @@ def get_numerical_fundamentals(tickers, key):
             info = yf.Ticker(ticker_str).info
             metric = info.get(key)
             if metric is not None and isinstance(metric, (int, float)):
-                # Special handling for dividend yield: assume it's a percentage
                 if key == 'dividendYield':
-                    metrics[ticker_str] = metric / 100.0 # Convert 2.5 to 0.025
-                elif metric > 0: # For PE/PEG, only accept positive
+                    metrics[ticker_str] = metric 
+                elif metric > 0: 
                     metrics[ticker_str] = metric
         except Exception:
             pass
     return metrics
 
-def parse_weights(weights_string, num_tickers):
-    """Converts a comma-separated string of weights into a valid list of floats."""
-    try:
-        weights_list = [float(w.strip()) for w in weights_string.split(",")]
-        
-        if len(weights_list) != num_tickers:
-            st.error(f"Error: You entered {len(weights_list)} weights but {num_tickers} tickers. Please ensure they match.")
-            return None
-
-        # Normalize weights to sum to 1 if they don't already
-        total_weight = sum(weights_list)
-        if not np.isclose(total_weight, 1.0):
-            st.warning(f"Weights sum to {total_weight:.2f}, not 1.0. Normalizing weights.")
-            weights_list = [w / total_weight for w in weights_list]
-            
-        return weights_list
-    except ValueError:
-        st.error("Error: Weights must be numbers. Please check your input (e.g., '50, 30, 20' or '0.5, 0.3, 0.2').")
-        return None
-    except Exception as e:
-        st.error(f"An error occurred parsing weights: {e}")
-        return None
+@st.cache_data
+def get_latest_prices(tickers):
+    """Fetches the latest price for a list of tickers."""
+    prices = {}
+    for t in tickers:
+        try:
+            info = yf.Ticker(t).info
+            price = info.get('currentPrice', info.get('previousClose'))
+            if price:
+                prices[t] = price
+            else:
+                st.warning(f"Could not get current price for {t}")
+        except Exception as e:
+            st.error(f"Error fetching price for {t}: {e}")
+    return prices
 
 def calculate_portfolio_beta(portfolio_returns, market_returns):
     """Calculates the beta of a portfolio given its returns and market returns."""
@@ -117,11 +107,12 @@ def calculate_portfolio_beta(portfolio_returns, market_returns):
 
 def get_diversification_grade(corr_matrix):
     """Calculates an average pairwise correlation and assigns a grade."""
-    # Get the lower triangle of the correlation matrix (excluding the diagonal)
     lower_triangle = corr_matrix.where(np.tril(np.ones(corr_matrix.shape), k=-1).astype(bool))
-    # Calculate the average of these correlations
     avg_corr = lower_triangle.stack().mean()
     
+    if np.isnan(avg_corr):
+        return "N/A", "Could not calculate correlation grade.", 0.0
+
     if avg_corr < 0.3:
         grade = "A+"
         note = "Excellent Diversification. Stocks are highly uncorrelated."
@@ -160,12 +151,15 @@ with st.sidebar:
         "Enter Tickers (comma-separated)", 
         "AAPL,MSFT,GOOG,AMZN,TSLA"
     )
+    tickers = [s.strip().upper() for s in tickers_string.split(",") if s.strip()]
     
     time_horizon = st.selectbox(
         "Select Time Horizon",
         ("1y", "2y", "3y", "5y", "10y"),
         index=3
     )
+    
+    custom_inputs = {}
     
     if app_mode == "Find an Optimal Portfolio":
         st.subheader("Optimization Goal")
@@ -177,23 +171,38 @@ with st.sidebar:
              "Safest (Minimum Volatility)"),
             key="goal"
         )
-        weights_string = "" # Not used in this mode
     
     else: # Analyze My Custom Portfolio
-        st.subheader("Your Custom Weights")
-        weights_string = st.text_input(
-            "Enter Weights (comma-separated)", 
-            "0.2, 0.2, 0.2, 0.2, 0.2"
+        st.subheader("Your Custom Portfolio")
+        
+        input_type = st.radio(
+            "Input By:",
+            ("Percentage Weights", "Number of Shares")
         )
+        
+        st.write("---")
+        
+        if tickers:
+            if input_type == "Percentage Weights":
+                st.write("Enter % (e.g., 25 for 25%):")
+                for t in tickers:
+                    custom_inputs[t] = st.number_input(f"Weight % {t}", min_value=0.0, max_value=100.0, value=100.0/len(tickers), step=1.0)
+            
+            else: # Number of Shares
+                st.write("Enter Number of Shares:")
+                for t in tickers:
+                    # --- FIX: Allow fractional shares up to 2 decimal places ---
+                    custom_inputs[t] = st.number_input(f"Shares {t}", min_value=0.0, value=1.0, step=0.01, format="%.2f")
+        else:
+            st.info("Enter tickers above to set weights or shares.")
+        
         optimization_choice = "" # Not used in this mode
 
     run_button = st.button("Run Analysis")
 
 
 # --- 6. MAIN APP LOGIC ---
-if run_button and tickers_string:
-    
-    tickers = [s.strip().upper() for s in tickers_string.split(",") if s.strip()]
+if run_button and tickers:
     
     if len(tickers) < 2:
         st.warning("Please enter at least two valid stock tickers.")
@@ -206,20 +215,18 @@ if run_button and tickers_string:
 
         try:
             # --- A. Fetch Price Data (Common to both modes) ---
-            raw_data = get_raw_stock_data(tickers, time_horizon) # This is now auto-adjusted
+            raw_data = get_raw_stock_data(tickers, time_horizon)
             
             if raw_data.empty:
                 st.error("Could not fetch price data. Are the tickers correct or is there a network issue?")
                 st.stop()
             
-            # --- B. Select 'Adj Close' or 'Close' prices ---
-            # With auto_adjust=True, we only get 'Close', which IS the adjusted price.
-            # We just need to handle single vs. multi-ticker downloads.
+            # --- B. Select 'Close' prices (which are auto-adjusted) ---
             if len(tickers) == 1:
                 data = raw_data[['Close']]
-                data.columns = tickers # Rename the column to the ticker
+                data.columns = tickers 
             else:
-                data = raw_data['Close'] # Just grab the 'Close' column group
+                data = raw_data['Close']
             
             if data.empty or data.isnull().all().all():
                 st.error("No valid 'Close' price data found after download. Check tickers and time horizon.")
@@ -228,13 +235,17 @@ if run_button and tickers_string:
             # --- C. Handle missing data ---
             data = data.dropna(axis=1, how='all').dropna(axis=0, how='any')
             
+            valid_tickers = data.columns.tolist()
             if len(data.columns) < 2:
                 st.error(f"Not enough valid data after cleaning. Need at least 2 tickers. Found: {', '.join(data.columns)}")
                 st.stop()
             
-            valid_tickers = data.columns.tolist()
             if len(valid_tickers) < len(tickers):
                 st.info(f"Analysis running on: {', '.join(valid_tickers)} (dropped tickers with missing price data).")
+                custom_inputs = {t: v for t, v in custom_inputs.items() if t in valid_tickers}
+                if not custom_inputs and app_mode == "Analyze My Custom Portfolio":
+                    st.error("None of your entered tickers have valid price data.")
+                    st.stop()
 
             # --- D. Get Risk-Free Rate & Risk Model (Common) ---
             rf_rate = get_rf_rate()
@@ -260,11 +271,8 @@ if run_button and tickers_string:
                     for col in ["Trailing P/E", "Forward P/E", "PEG Ratio", "P/B Ratio"]:
                         fundamental_df[col] = pd.to_numeric(fundamental_df[col], errors='coerce').map('{:,.2f}'.format, na_action='ignore')
                     
-                    # --- FIX for Div. Yield ---
-                    # Assume API returns a percentage (e.g., 2.5 for 2.5%), so divide by 100 to get float (0.025)
-                    div_yield_numeric = pd.to_numeric(fundamental_df["Div. Yield"], errors='coerce') / 100
+                    div_yield_numeric = pd.to_numeric(fundamental_df["Div. Yield"], errors='coerce')
                     fundamental_df["Div. Yield"] = div_yield_numeric.map('{:,.2%}'.format, na_action='ignore')
-                    # --- End Fix ---
 
                     fundamental_df["Market Cap"] = pd.to_numeric(fundamental_df["Market Cap"], errors='coerce').map('{:,.0f}'.format, na_action='ignore')
                     st.dataframe(fundamental_df)
@@ -302,7 +310,6 @@ if run_button and tickers_string:
                             if not metrics:
                                 st.error("Could not fetch any valid Forward P/E ratios for this optimization.")
                                 st.stop()
-                            # Use 1/PE as the return vector
                             mu_series = pd.Series({ticker: 1/pe for ticker, pe in metrics.items()})
                         
                         elif optimization_choice == "Growth at a Reasonable Price (Lowest PEG)":
@@ -312,10 +319,8 @@ if run_button and tickers_string:
                             if not metrics:
                                 st.error("Could not fetch any valid PEG Ratios for this optimization.")
                                 st.stop()
-                            # Use 1/PEG as the return vector
                             mu_series = pd.Series({ticker: 1/peg for ticker, peg in metrics.items()})
 
-                        # Align S and mu
                         common_tickers = list(set(S.columns) & set(mu_series.index))
                         if len(common_tickers) < 2:
                             st.error(f"Not enough common data (Price History + Fundamentals) to optimize. Need at least 2 tickers.")
@@ -326,7 +331,7 @@ if run_button and tickers_string:
                         st.info(f"Optimizing on {len(common_tickers)} stocks with valid data: {', '.join(common_tickers)}")
                         
                         ef = EfficientFrontier(mu, S_filtered)
-                        weights = ef.max_sharpe(risk_free_rate=0.0) # Use 0 RFR for fundamental-based "yields"
+                        weights = ef.max_sharpe(risk_free_rate=0.0) 
 
                     
                     cleaned_weights = ef.clean_weights()
@@ -363,14 +368,38 @@ if run_button and tickers_string:
                 elif app_mode == "Analyze My Custom Portfolio":
                     st.header("Portfolio Report Card")
                     
-                    # --- 1. Parse Weights ---
-                    custom_weights_list = parse_weights(weights_string, len(valid_tickers))
-                    if custom_weights_list is None:
-                        st.stop() # Stop if weights are invalid
+                    weights_dict = {}
                     
-                    weights_dict = dict(zip(valid_tickers, custom_weights_list))
-                    weights_array = np.array(custom_weights_list)
+                    # --- 1. Calculate Weights ---
+                    if input_type == "Percentage Weights":
+                        total_pct = sum(custom_inputs.values())
+                        if not np.isclose(total_pct, 100.0) and total_pct > 0:
+                            st.warning(f"Weights sum to {total_pct:.2f}%, not 100%. Normalizing weights.")
+                            weights_dict = {t: w / total_pct for t, w in custom_inputs.items()}
+                        elif total_pct == 0:
+                            st.error("Weights sum to zero. Please enter valid percentages.")
+                            st.stop()
+                        else:
+                            weights_dict = {t: w / 100.0 for t, w in custom_inputs.items()}
+                    
+                    else: # Number of Shares
+                        prices = get_latest_prices(valid_tickers)
+                        if not prices:
+                            st.error("Could not fetch current prices to calculate weights from shares.")
+                            st.stop()
+                        
+                        dollar_values = {t: custom_inputs[t] * prices.get(t, 0) for t in custom_inputs}
+                        total_portfolio_value = sum(dollar_values.values())
+                        
+                        if total_portfolio_value == 0:
+                            st.error("Portfolio value is zero. Could not fetch prices or all share counts are zero.")
+                            st.stop()
+                        
+                        weights_dict = {t: v / total_portfolio_value for t, v in dollar_values.items()}
 
+                    
+                    weights_array = np.array([weights_dict.get(t, 0) for t in valid_tickers])
+                    
                     st.subheader("Your Custom Weights")
                     col1, col2 = st.columns(2)
                     with col1:
@@ -395,6 +424,9 @@ if run_button and tickers_string:
                         st.metric("Expected Annual Return", f"{perf[0]:.2%}")
                         st.metric("Annual Volatility (Risk)", f"{perf[1]:.2%}")
                         st.metric("Sharpe Ratio", f"{perf[2]:.2f}")
+                        
+                        if input_type == "Number of Shares":
+                            st.metric("Total Portfolio Value", f"${total_portfolio_value:,.2f}")
 
                     st.divider()
                     
@@ -404,9 +436,8 @@ if run_button and tickers_string:
                     with col1:
                         # Beta
                         market_data = get_market_data(time_horizon)
-                        # --- FIX: With auto_adjust=True, we just need 'Close' ---
-                        market_returns = market_data['Close'].pct_change().squeeze() # Don't dropna yet
-
+                        market_returns = market_data['Close'].pct_change().squeeze() 
+                        
                         portfolio_returns = (data.pct_change() * weights_array).sum(axis=1).squeeze()
                         
                         combined_returns = pd.DataFrame({
@@ -437,7 +468,7 @@ if run_button and tickers_string:
                     fwd_pes = get_numerical_fundamentals(valid_tickers, "forwardPE")
                     if fwd_pes:
                         valid_pe_tickers = set(weights_dict.keys()) & set(fwd_pes.keys())
-                        weighted_pe = sum(weights_dict[ticker] * fwd_pes[ticker] for ticker in valid_pe_tickers)
+                        weighted_pe = sum(weights_dict[ticker] * fwd_pes[ticker] for ticker in valid_pe_tickers if fwd_pes.get(ticker, 0) > 0)
                         col1.metric("Weighted Forward P/E", f"{weighted_pe:.2f}")
                     else:
                         col1.metric("Weighted Forward P/E", "N/A")
@@ -446,7 +477,7 @@ if run_button and tickers_string:
                     pegs = get_numerical_fundamentals(valid_tickers, "pegRatio")
                     if pegs:
                         valid_peg_tickers = set(weights_dict.keys()) & set(pegs.keys())
-                        weighted_peg = sum(weights_dict[ticker] * pegs[ticker] for ticker in valid_peg_tickers)
+                        weighted_peg = sum(weights_dict[ticker] * pegs[ticker] for ticker in valid_peg_tickers if pegs.get(ticker, 0) > 0)
                         col2.metric("Weighted PEG Ratio", f"{weighted_peg:.2f}")
                     else:
                         col2.metric("Weighted PEG Ratio", "N/A")
@@ -455,7 +486,6 @@ if run_button and tickers_string:
                     div_yields = get_numerical_fundamentals(valid_tickers, "dividendYield")
                     if div_yields:
                         valid_div_tickers = set(weights_dict.keys()) & set(div_yields.keys())
-                        # Note: div_yields from get_numerical_fundamentals is already a float (0.025)
                         weighted_div = sum(weights_dict[ticker] * div_yields[ticker] for ticker in valid_div_tickers)
                         col3.metric("Weighted Dividend Yield", f"{weighted_div:.2%}")
                     else:
@@ -471,5 +501,5 @@ if run_button and tickers_string:
             
 # --- 8. INITIAL PAGE CONTENT ---
 else:
-    if not tickers_string:
+    if not tickers:
         st.info("Enter your tickers in the sidebar to begin.")
