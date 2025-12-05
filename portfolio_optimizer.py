@@ -10,9 +10,68 @@ import plotly.graph_objects as go
 # --- 1. PAGE CONFIGURATION ---
 st.set_page_config(page_title="Portfolio Optimizer", layout="wide")
 
-# --- 2. TITLE AND HEADER ---
+# --- 2. TITLE AND HEADER (MODIFIED FOR FLOATING BANNER) ---
 st.title("Modern Portfolio Theory Optimizer 📈")
 st.write("A tool for portfolio optimization, custom analysis, and single-stock deep dives.")
+
+# 🚀 FLOATING DISCORD BANNER (CSS IMPLEMENTATION)
+DISCORD_LINK = "https://discord.gg/YnbhKTZv"
+
+st.markdown(
+    f"""
+    <style>
+    /* Ensure Streamlit containers are relative for absolute positioning to work */
+    .block-container {{
+        position: relative;
+    }}
+
+    /* CSS for the Floating Banner */
+    .floating-discord-banner {{
+        position: absolute;
+        top: 0px; /* Adjust vertical position */
+        right: 0px; /* Adjust horizontal position */
+        z-index: 1000; /* Ensure it floats above other content */
+        background-color: #7289DA; /* Discord Brand Color */
+        padding: 8px 15px; /* Smaller padding */
+        border-radius: 8px;
+        box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
+        max-width: 300px; /* Limit the width */
+        text-align: center;
+        transition: transform 0.3s ease; /* Optional: smooth hover effect */
+    }}
+
+    .floating-discord-banner:hover {{
+        transform: scale(1.03);
+    }}
+
+    .floating-discord-banner h5 {{
+        color: white; 
+        margin: 0; 
+        font-size: 14px; /* Smaller font size */
+        line-height: 1.2;
+    }}
+
+    .floating-discord-banner a {{
+        color: #FEE75C !important; /* Yellow-gold color for the link */
+        text-decoration: none;
+        font-weight: bold;
+    }}
+
+    </style>
+
+    <div class="floating-discord-banner">
+        <h5>
+            TWA Capital Discord 🚀
+            <br>
+            <a href="{DISCORD_LINK}" target="_blank">JOIN FREE ANALYSIS</a>
+        </h5>
+    </div>
+    """,
+    unsafe_allow_html=True
+)
+
+st.write("---") # Separator after the title
+
 
 # --- 3. SESSION STATE ---
 # Initialize session state to remember if analysis has been run
