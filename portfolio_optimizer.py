@@ -15,7 +15,7 @@ st.title("Modern Portfolio Theory Optimizer 📈")
 st.write("A tool for portfolio optimization, custom analysis, and single-stock deep dives.")
 
 # 🚀 FLOATING DISCORD BANNER (CSS IMPLEMENTATION)
-DISCORD_LINK = "https://discord.gg/YnbhKTZv"
+DISCORD_LINK = "https://discord.gg/cPXqEcfeka"
 
 st.markdown(
     f"""
